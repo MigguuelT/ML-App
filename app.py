@@ -2,8 +2,6 @@ import streamlit as st
 import pandas as pd
 import joblib
 import os
-
-# Importa a sua classe (certifique-se que o arquivo automl_agent.py está na mesma pasta)
 from automl_agent import AutoMLAgentPro
 
 # Configuração da Página
@@ -11,98 +9,115 @@ st.set_page_config(page_title="AutoML Agent Pro", page_icon="🤖", layout="wide
 
 st.title("🤖 Agente de Machine Learning Automatizado")
 st.markdown("""
-Este agente analisa seus dados, escolhe o melhor modelo (Classificação ou Regressão), 
-trata outliers e treina a inteligência artificial automaticamente.
+Este agente analisa seus dados, trata outliers, seleciona as melhores features
+e treina o modelo ideal (Classificação ou Regressão) automaticamente.
 """)
 
-# --- BARRA LATERAL (Inputs) ---
+# --- BARRA LATERAL ---
 st.sidebar.header("1. Upload de Dados")
 uploaded_file = st.sidebar.file_uploader("Carregue seu arquivo CSV", type=["csv"])
 
 st.sidebar.header("2. Configurações")
 target_col = st.sidebar.text_input("Nome da Coluna Alvo (Target)", value="")
-description = st.sidebar.text_area("Descrição do Problema (Opcional)", placeholder="Ex: Prever rotatividade de clientes")
+description = st.sidebar.text_area("Descrição do Problema (Opcional)", placeholder="Ex: Prever preço de imóveis")
 btn_train = st.sidebar.button("🚀 Iniciar Treinamento")
 
 # --- ÁREA PRINCIPAL ---
 if uploaded_file is not None:
-    # Ler o arquivo
     try:
         df = pd.read_csv(uploaded_file)
         st.write("### 📊 Pré-visualização dos Dados")
         st.dataframe(df.head())
         
-        # Verificar colunas
         if target_col and target_col not in df.columns:
             st.error(f"Erro: A coluna '{target_col}' não foi encontrada no arquivo.")
-        
+            
     except Exception as e:
         st.error(f"Erro ao ler arquivo: {e}")
 
     # --- LÓGICA DE TREINAMENTO ---
     if btn_train and target_col in df.columns:
         st.divider()
-        st.subheader("⚙️ Processando...")
+        st.subheader("⚙️ Treinando Modelo Inteligente...")
         
-        # Barra de progresso visual
         progress_bar = st.progress(0)
         status_text = st.empty()
         
         try:
-            # 1. Instanciar Agente
             agent = AutoMLAgentPro()
             
-            # Como o print() não sai no site, vamos capturar logs ou confiar no resultado final
-            # Para um app real, idealmente alteraríamos a classe para retornar textos em vez de printar
-            # Mas aqui vamos rodar direto:
-            
-            status_text.text("Analisando tipo de problema e tratando dados...")
+            status_text.text("Analisando dados, tratando outliers e otimizando hiperparâmetros...")
             progress_bar.progress(20)
             
-            # Redirecionando prints para o console do servidor (logs)
-            # E executando o treino
-            agent.train(df, target_column=target_col, description=description)
+            # TREINO + CAPTURA DE MÉTRICAS
+            metrics = agent.train(df, target_column=target_col, description=description)
             
             progress_bar.progress(80)
-            status_text.text("Finalizando validação cruzada...")
+            status_text.text("Gerando relatório final...")
             
-            # Salvar modelo temporariamente para download
+            # Salvar modelo
             model_filename = "meu_modelo_treinado.pkl"
             agent.save_model(model_filename)
             
             progress_bar.progress(100)
-            status_text.text("Concluído!")
+            status_text.empty()
             
-            # --- EXIBIÇÃO DOS RESULTADOS ---
-            st.success("Treinamento Finalizado com Sucesso!")
+            # --- DASHBOARD DE RESULTADOS ---
+            st.success("✅ Treinamento Concluído com Sucesso!")
             
-            col1, col2 = st.columns(2)
-            
-            with col1:
-                st.info(f"**Tipo de Problema Detectado:** {agent.problem_type.upper()}")
-                st.info(f"**Modelo Vencedor:** {agent.best_model.steps[-1][1].__class__.__name__}")
-                
-                # Exibir melhores hiperparâmetros
-                with st.expander("Ver Melhores Hiperparâmetros"):
-                    st.json(agent.best_params)
+            st.markdown("### 🏆 Melhor Modelo Encontrado")
+            col_info1, col_info2 = st.columns(2)
+            col_info1.info(f"**Algoritmo Vencedor:** {agent.best_model.steps[-1][1].__class__.__name__}")
+            col_info2.info(f"**Tipo de Problema:** {agent.problem_type.upper()}")
 
-            with col2:
-                st.write("### 📥 Baixar Modelo")
+            # --- VISUALIZAÇÃO DE MÉTRICAS ---
+            st.markdown("### 📊 Performance nos Dados de Teste")
+            
+            if agent.problem_type == 'classification':
+                # Métricas Classificação
+                m_col1, m_col2 = st.columns(2)
+                m_col1.metric("Acurácia (Accuracy)", f"{metrics['accuracy']:.2%}")
+                
+                # Tabela detalhada
+                st.markdown("#### Detalhes por Classe (Precision/Recall)")
+                report_df = pd.DataFrame(metrics['report']).transpose()
+                # Remove as linhas de média se quiser limpar a view, ou mantém
+                st.dataframe(report_df.style.highlight_max(axis=0))
+                
+            else:
+                # Métricas Regressão
+                m_col1, m_col2, m_col3 = st.columns(3)
+                m_col1.metric("R² Score (Explicação)", f"{metrics['r2']:.4f}")
+                m_col2.metric("Erro Médio (MAE)", f"{metrics['mae']:.4f}")
+                m_col3.metric("RMSE", f"{metrics['rmse']:.4f}")
+                
+                if metrics['r2'] > 0.80:
+                    st.caption("🌟 Excelente! O modelo explica muito bem a variação dos dados.")
+                elif metrics['r2'] < 0.50:
+                    st.caption("⚠️ Atenção: O modelo teve dificuldade. Considere adicionar mais dados ou features.")
+
+            # --- DOWNLOAD E PARÂMETROS ---
+            st.divider()
+            col_down1, col_down2 = st.columns(2)
+            
+            with col_down1:
+                st.write("### 📥 Baixar Modelo Pronto")
                 with open(model_filename, "rb") as f:
                     st.download_button(
-                        label="Download do Modelo (.pkl)",
+                        label="Download Modelo (.PKL)",
                         data=f,
                         file_name=model_filename,
                         mime="application/octet-stream"
                     )
-
-            st.warning("Nota: Para ver as métricas detalhadas (Acurácia/RMSE), verifique o log do terminal ou adapte a classe para retornar esses valores.")
+            
+            with col_down2:
+                with st.expander("🔍 Ver Hiperparâmetros Técnicos"):
+                    st.json(agent.best_params)
 
         except Exception as e:
-            st.error(f"Ocorreu um erro durante o treinamento: {e}")
+            st.error(f"Ocorreu um erro crítico: {e}")
 
 elif btn_train:
     st.warning("Por favor, faça o upload de um arquivo CSV primeiro.")
-
 else:
-    st.info("👈 Comece carregando um arquivo na barra lateral.")
+    st.info("👈 Comece carregando seus dados na barra lateral.")

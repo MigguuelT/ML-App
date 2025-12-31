@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import warnings
-import joblib  # Para salvar/carregar modelos
+import joblib
 import os
 
 # Sklearn Imports
@@ -12,7 +12,7 @@ from sklearn.preprocessing import RobustScaler, OneHotEncoder, LabelEncoder
 from sklearn.compose import ColumnTransformer
 from sklearn.feature_selection import SelectKBest, f_classif, f_regression
 
-# Modelos (Incluindo HistGradientBoosting - SOTA do Scikit-Learn)
+# Modelos Modernos e Clássicos
 from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor, HistGradientBoostingClassifier, HistGradientBoostingRegressor
 from sklearn.linear_model import LogisticRegression, Ridge
 
@@ -29,7 +29,6 @@ class AutoMLAgentPro:
         self.best_model = None
         self.best_params = None
         self.target_encoder = None
-        self.results = {}
         
     def _detect_problem_type(self, y):
         """Detecção automática do tipo de problema baseada no alvo."""
@@ -45,19 +44,16 @@ class AutoMLAgentPro:
 
     def _get_preprocessor(self, X):
         """
-        MELHORIA 1: Tratamento Robusto.
-        Usa Mediana e RobustScaler para mitigar outliers.
+        Tratamento Robusto: Mediana + RobustScaler para mitigar outliers.
         """
         numeric_features = X.select_dtypes(include=['int64', 'float64']).columns
         categorical_features = X.select_dtypes(include=['object', 'category', 'bool']).columns
 
-        # Tratamento Numérico: Mediana + RobustScaler
         numeric_transformer = Pipeline(steps=[
             ('imputer', SimpleImputer(strategy='median')),
             ('scaler', RobustScaler()) 
         ])
 
-        # Tratamento Categórico
         categorical_transformer = Pipeline(steps=[
             ('imputer', SimpleImputer(strategy='most_frequent')),
             ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False))
@@ -73,17 +69,13 @@ class AutoMLAgentPro:
 
     def _get_model_candidates(self):
         """
-        MELHORIA 2 e 3: Seleção de Features e Modelos Modernos.
-        Inclui HistGradientBoosting (rápido e preciso) e SelectKBest.
+        Define candidatos (HistGradientBoosting, RF, Linear) e Seleção de Features.
         """
-        
-        # Define função de pontuação para seleção de features
         if self.problem_type == 'classification':
             selector_score_func = f_classif
             scoring = 'accuracy'
             cv_split = StratifiedKFold(n_splits=5, shuffle=True, random_state=self.random_state)
             
-            # Modelos de Classificação
             models = [
                 {
                     'name': 'HistGradientBoosting (LightGBM style)',
@@ -91,7 +83,7 @@ class AutoMLAgentPro:
                     'params': {
                         'model__learning_rate': [0.01, 0.1],
                         'model__max_iter': [100, 200],
-                        'selector__k': ['all', 10] # Tenta usar todas features ou só as 10 melhores
+                        'selector__k': ['all', 10]
                     }
                 },
                 {
@@ -118,7 +110,6 @@ class AutoMLAgentPro:
             scoring = 'r2'
             cv_split = KFold(n_splits=5, shuffle=True, random_state=self.random_state)
             
-            # Modelos de Regressão
             models = [
                 {
                     'name': 'HistGradientBoosting Regressor',
@@ -152,31 +143,23 @@ class AutoMLAgentPro:
 
     def train(self, df, target_column, description=None):
         """
-        Método principal de treino.
-        MELHORIA 4: Input de usuário para contexto.
+        Treina, Avalia e Retorna Métricas Detalhadas.
         """
-        print("\n" + "#"*60)
-        print("   INICIANDO AGENTE AUTOML PRO 2.0   ")
-        print("#"*60)
-
-        # 0. Coleta de Contexto (Prompt do Usuário)
+        # Contexto
         if description:
             self.problem_description = description
+            print(f"Contexto: {description}")
         else:
-            print("\n>>> INPUT NECESSÁRIO: Por favor, descreva brevemente o problema.")
-            print("Ex: 'Prever churn de clientes' ou 'Estimar preço de casas'.")
-            self.problem_description = input("Descrição: ")
-        
-        print(f"\nCONTEXTO DO PROBLEMA: {self.problem_description}")
+            print("Sem descrição fornecida.")
 
         X = df.drop(columns=[target_column])
         y = df[target_column]
 
         # 1. Determinar tipo
         self.problem_type = self._detect_problem_type(y)
-        print(f"TIPO DETECTADO: {self.problem_type.upper()}")
+        print(f"Tipo Detectado: {self.problem_type}")
 
-        # Encoding de target se necessário
+        # Encoding de target (Classificação string -> int)
         if self.problem_type == 'classification' and y.dtype == 'object':
             self.target_encoder = LabelEncoder()
             y = self.target_encoder.fit_transform(y)
@@ -184,31 +167,24 @@ class AutoMLAgentPro:
         # 2. Split
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=self.random_state)
 
-        # 3. Preprocessor
+        # 3. Pipeline Setup
         preprocessor = self._get_preprocessor(X)
-
-        # 4. Configuração de Candidatos
         candidates, scoring_metric, cv, selector_func = self._get_model_candidates()
         
         best_score_overall = -np.inf
         best_model_overall = None
         
-        print(f"\n>>> Otimizando modelos usando métrica: {scoring_metric.upper()}")
-        
+        # 4. Loop de Treinamento
         for candidate in candidates:
-            # PIPELINE ATUALIZADO: Preprocess -> Selector -> Model
             pipe = Pipeline(steps=[
                 ('preprocessor', preprocessor),
                 ('selector', SelectKBest(score_func=selector_func)),
                 ('model', candidate['estimator'])
             ])
             
-            print(f"   > Treinando: {candidate['name']}...")
-            
+            print(f" > Otimizando: {candidate['name']}...")
             grid = GridSearchCV(pipe, param_grid=candidate['params'], cv=cv, scoring=scoring_metric, n_jobs=-1)
             grid.fit(X_train, y_train)
-            
-            print(f"     Melhor Validação: {grid.best_score_:.4f}")
             
             if grid.best_score_ > best_score_overall:
                 best_score_overall = grid.best_score_
@@ -216,62 +192,37 @@ class AutoMLAgentPro:
                 self.best_params = grid.best_params_
 
         self.best_model = best_model_overall
-        print(f"\n>>> MODELO VENCEDOR: {self.best_model.steps[-1][1].__class__.__name__}")
-        print(f">>> Score Validação Cruzada: {best_score_overall:.4f}")
+        print(f"Modelo Vencedor: {self.best_model.steps[-1][1].__class__.__name__}")
 
-        # 5. Avaliação Final
-        print("\n" + "-"*30)
-        print(" RELATÓRIO FINAL (DADOS DE TESTE)")
-        print("-" * 30)
+        # 5. Avaliação e Geração de Métricas
         y_pred = self.best_model.predict(X_test)
-        
+        final_metrics = {}
+
         if self.problem_type == 'classification':
-            print(classification_report(y_test, y_pred))
+            acc = accuracy_score(y_test, y_pred)
+            # output_dict=True é crucial para o Dashboard
+            report_dict = classification_report(y_test, y_pred, output_dict=True)
+            
+            final_metrics['accuracy'] = acc
+            final_metrics['report'] = report_dict
+            print(f"Acurácia Final: {acc:.4f}")
         else:
-            rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+            mse = mean_squared_error(y_test, y_pred)
+            rmse = np.sqrt(mse)
             mae = mean_absolute_error(y_test, y_pred)
             r2 = r2_score(y_test, y_pred)
-            print(f"RMSE: {rmse:.4f}")
-            print(f"MAE:  {mae:.4f}")
-            print(f"R2:   {r2:.4f}")
+            
+            final_metrics['rmse'] = rmse
+            final_metrics['mae'] = mae
+            final_metrics['r2'] = r2
+            print(f"R2 Final: {r2:.4f}")
+
+        return final_metrics
 
     def save_model(self, filename='automl_model.pkl'):
-        """MELHORIA 5: Persistência do Modelo."""
         if self.best_model:
             joblib.dump(self.best_model, filename)
-            print(f"\n[SISTEMA] Modelo salvo com sucesso em '{filename}'")
-        else:
-            print("\n[ERRO] Nenhum modelo treinado para salvar.")
 
     def load_model(self, filename='automl_model.pkl'):
         if os.path.exists(filename):
             self.best_model = joblib.load(filename)
-            print(f"\n[SISTEMA] Modelo carregado de '{filename}'")
-        else:
-            print(f"\n[ERRO] Arquivo '{filename}' não encontrado.")
-
-# ==========================================
-# EXEMPLE DE EXECUÇÃO
-# ==========================================
-
-if __name__ == "__main__":
-    from sklearn.datasets import make_regression
-    
-    # 1. Gerar dados sujos (com outliers)
-    print("Gerando dados de teste...")
-    X, y = make_regression(n_samples=500, n_features=10, noise=0.5, random_state=42)
-    df = pd.DataFrame(X, columns=[f'f{i}' for i in range(10)])
-    
-    # Introduzindo Outliers propositalmente
-    df.loc[0:10, 'f0'] = 100000.0 
-    df['target'] = y
-    
-    # 2. Instanciar Agente
-    agent = AutoMLAgentPro()
-    
-    # 3. Treinar (Aqui ele vai pedir input se não passarmos description)
-    # Para teste automático, passamos a descrição direta
-    agent.train(df, target_column='target', description="Previsão de valores com Outliers Extremos")
-    
-    # 4. Salvar
-    agent.save_model("modelo_teste.pkl")
