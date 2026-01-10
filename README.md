@@ -42,6 +42,8 @@ pip install -r requirements.txt
 
 ### Executando a Aplicação
 
+### Opção 1: Web App (Interface Visual)
+
 Para iniciar a interface web do Streamlit, execute o seguinte comando no terminal:
 
 ```bash
@@ -50,10 +52,18 @@ streamlit run app.py
 
 O navegador será aberto automaticamente (geralmente em `http://localhost:8501`).
 
+### Opção 2: Script de Previsão (Automação)
+Para fazer previsões em lote sem abrir interface gráfica:
+1. Coloque seu modelo treinado (.pkl) e seus dados (.csv ou .xlsx) na pasta.
+2. Edite o arquivo `fazer_previsao_arquivo.py` com os nomes dos arquivos.
+3. Execute:
+python fazer_previsao_arquivo.py
+
 ## 📂 Estrutura do Projeto
 
 *   **`app.py`**: Arquivo principal da aplicação Streamlit. Gerencia a interface do usuário, upload de arquivos e interação com o agente de ML.
 *   **`automl_agent.py`**: Contém a classe `AutoMLAgentPro`, que encapsula toda a lógica de Machine Learning (pré-processamento, treinamento, avaliação e salvamento).
+*   **`fazer_previsao_arquivo.py`**: (Local): Esse é um script independente para você rodar no seu computador (terminal) quando não quiser abrir o navegador.
 *   **`requirements.txt`**: Lista das bibliotecas Python necessárias.
 
 ## 🛠️ Tecnologias Utilizadas
@@ -64,13 +74,19 @@ O navegador será aberto automaticamente (geralmente em `http://localhost:8501`)
 *   [Joblib](https://joblib.readthedocs.io/) - Serialização de Modelos
 
 ## 📝 Uso
-
+### Aba Treinamento:
 1.  Abra a aplicação.
 2.  Na barra lateral, faça o upload do seu dataset em formato **CSV**.
 3.  Informe o nome da **Coluna Alvo (Target)** que deseja prever.
 4.  (Opcional) Forneça uma descrição do problema para contexto.
 5.  Clique em **"Iniciar Treinamento"**.
 6.  Aguarde o processamento e baixe o modelo final otimizado!
+7.  
+### Aba Previsão:
+1.  No campo 1, você sobe o arquivo .pkl que acabou de baixar (ou um antigo).
+2.  No campo 2, você sobe um CSV novo (ex: novos clientes que você quer saber se vão cancelar o serviço).
+**Importante:** Esse CSV novo precisa ter as mesmas colunas de características (features) que o arquivo original, mas não precisa ter a coluna Target (a resposta), nem precisa estar tratado (o modelo trata nulos e texto automaticamente).
+3.  Clique em Gerar Previsões e baixe a planilha pronta com a coluna nova PREVISAO_IA.
 
 ---
 *Desenvolvido com ❤️ para simplificar o Machine Learning.*
