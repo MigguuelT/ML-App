@@ -81,7 +81,7 @@ python fazer_previsao_arquivo.py
 4.  (Opcional) Forneça uma descrição do problema para contexto.
 5.  Clique em **"Iniciar Treinamento"**.
 6.  Aguarde o processamento e baixe o modelo final otimizado!
-7.  
+  
 ### Aba Previsão:
 1.  No campo 1, você sobe o arquivo .pkl que acabou de baixar (ou um antigo).
 2.  No campo 2, você sobe um CSV novo (ex: novos clientes que você quer saber se vão cancelar o serviço).
