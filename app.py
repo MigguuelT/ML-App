@@ -1,147 +1,173 @@
 import streamlit as st
 import pandas as pd
 import joblib
-import os
 from automl_agent import AutoMLAgentPro
 
 # Configuração da Página
 st.set_page_config(page_title="AutoML Agent Pro", page_icon="🤖", layout="wide")
 
 st.title("🤖 Agente de Machine Learning Automatizado")
-st.markdown("""
-Este agente analisa seus dados, trata outliers, seleciona as melhores features
-e treina o modelo ideal (Classificação ou Regressão) automaticamente.
-""")
 
-# --- BARRA LATERAL: 1. UPLOAD ---
-st.sidebar.header("1. Upload de Dados")
+# --- CRIAÇÃO DAS ABAS ---
+tab1, tab2 = st.tabs(["🏋️‍♂️ Treinamento (Criar IA)", "🔮 Previsão (Usar IA)"])
 
-# Opção extra para garantir leitura correta de CSVs brasileiros (ponto e vírgula)
-sep_option = st.sidebar.selectbox("Separador do CSV", options=[", (Vírgula)", "; (Ponto e Vírgula)"])
-separator = "," if sep_option == ", (Vírgula)" else ";"
-
-uploaded_file = st.sidebar.file_uploader("Carregue seu arquivo CSV", type=["csv"])
-
-# --- INICIALIZAÇÃO DE VARIÁVEIS ---
-df = None
-target_col = None
-btn_train = False
-description = ""
-
-# --- LEITURA DO ARQUIVO E CONFIGURAÇÃO DINÂMICA ---
-if uploaded_file is not None:
-    try:
-        # Lê o arquivo com o separador escolhido
-        df = pd.read_csv(uploaded_file, sep=separator)
-        
-        # CORREÇÃO CRÍTICA: Remove espaços em branco antes e depois dos nomes das colunas
-        # Ex: " Sex " vira "Sex"
-        df.columns = df.columns.str.strip()
-        
-        # --- BARRA LATERAL: 2. CONFIGURAÇÕES (Só aparecem após upload) ---
-        st.sidebar.divider()
-        st.sidebar.header("2. Configurações")
-        
-        # DROPDOWN: O usuário escolhe a coluna da lista (Evita erros de digitação)
-        all_columns = df.columns.tolist()
-        target_col = st.sidebar.selectbox("Escolha a Coluna Alvo (Target)", options=all_columns)
-        
-        description = st.sidebar.text_area("Descrição do Problema (Opcional)", placeholder="Ex: Prever sobreviventes do Titanic")
-        
-        # Botão de treino
-        btn_train = st.sidebar.button("🚀 Iniciar Treinamento")
-        
-        # --- ÁREA PRINCIPAL: PREVIEW ---
-        st.write("### 📊 Pré-visualização dos Dados")
-        st.write(f"Dimensões do Dataset: {df.shape[0]} linhas x {df.shape[1]} colunas")
-        st.dataframe(df.head())
-        
-    except Exception as e:
-        st.error(f"Erro ao ler o arquivo. Tente mudar o 'Separador do CSV' na barra lateral.\nDetalhe do erro: {e}")
-
-else:
-    st.info("👈 Comece carregando seus dados na barra lateral.")
-
-
-# --- LÓGICA DE TREINAMENTO ---
-if btn_train and df is not None:
-    st.divider()
-    st.subheader(f"⚙️ Treinando Modelo para prever: **{target_col}**")
+# ====================================================
+# ABA 1: TREINAMENTO
+# ====================================================
+with tab1:
+    st.markdown("### Treine um novo modelo a partir dos seus dados históricos")
     
-    progress_bar = st.progress(0)
-    status_text = st.empty()
+    # --- BARRA LATERAL (Exclusiva da Aba 1, mas renderizada na sidebar comum) ---
+    st.sidebar.header("📁 Configuração de Arquivos")
+    sep_option = st.sidebar.selectbox("Separador do CSV", options=[", (Vírgula)", "; (Ponto e Vírgula)"])
+    separator = "," if sep_option == ", (Vírgula)" else ";"
     
-    try:
-        agent = AutoMLAgentPro()
-        
-        status_text.text("Analisando dados, tratando outliers e otimizando hiperparâmetros...")
-        progress_bar.progress(20)
-        
-        # TREINO + CAPTURA DE MÉTRICAS
-        # Passamos description apenas se o usuário tiver digitado algo
-        desc_final = description if description else f"Previsão de {target_col}"
-        metrics = agent.train(df, target_column=target_col, description=desc_final)
-        
-        progress_bar.progress(80)
-        status_text.text("Gerando relatório final...")
-        
-        # Salvar modelo
-        model_filename = "meu_modelo_treinado.pkl"
-        agent.save_model(model_filename)
-        
-        progress_bar.progress(100)
-        status_text.empty()
-        
-        # --- DASHBOARD DE RESULTADOS ---
-        st.success("✅ Treinamento Concluído com Sucesso!")
-        
-        st.markdown("### 🏆 Melhor Modelo Encontrado")
-        col_info1, col_info2 = st.columns(2)
-        col_info1.info(f"**Algoritmo Vencedor:** {agent.best_model.steps[-1][1].__class__.__name__}")
-        col_info2.info(f"**Tipo de Problema:** {agent.problem_type.upper()}")
+    # Upload Dados de Treino
+    train_file = st.sidebar.file_uploader("Upload Dados de TREINO (CSV)", type=["csv"], key="train_uploader")
 
-        # --- VISUALIZAÇÃO DE MÉTRICAS ---
-        st.markdown("### 📊 Performance nos Dados de Teste")
-        
-        if agent.problem_type == 'classification':
-            # Métricas Classificação
-            m_col1, m_col2 = st.columns(2)
-            m_col1.metric("Acurácia (Accuracy)", f"{metrics['accuracy']:.2%}")
+    # Variáveis de controle
+    df_train = None
+    target_col = None
+    
+    if train_file is not None:
+        try:
+            df_train = pd.read_csv(train_file, sep=separator)
+            df_train.columns = df_train.columns.str.strip() # Limpeza de nomes
             
-            # Tabela detalhada
-            st.markdown("#### Detalhes por Classe")
-            report_df = pd.DataFrame(metrics['report']).transpose()
-            st.dataframe(report_df.style.highlight_max(axis=0))
+            st.write("#### Pré-visualização dos Dados de Treino")
+            st.dataframe(df_train.head())
             
-        else:
-            # Métricas Regressão
-            m_col1, m_col2, m_col3 = st.columns(3)
-            m_col1.metric("R² Score (Explicação)", f"{metrics['r2']:.4f}")
-            m_col2.metric("Erro Médio (MAE)", f"{metrics['mae']:.4f}")
-            m_col3.metric("RMSE", f"{metrics['rmse']:.4f}")
+            # Seleção de Colunas
+            st.sidebar.divider()
+            st.sidebar.subheader("⚙️ Config. Treino")
             
-            if metrics['r2'] > 0.80:
-                st.caption("🌟 Excelente! O modelo explica muito bem a variação dos dados.")
-            elif metrics['r2'] < 0.50:
-                st.caption("⚠️ Atenção: O modelo teve dificuldade. Considere adicionar mais dados ou features.")
+            all_columns = df_train.columns.tolist()
+            target_col = st.sidebar.selectbox("Coluna Alvo (Target)", options=all_columns)
+            description = st.sidebar.text_area("Descrição (Opcional)", placeholder="Ex: Prever vendas")
+            
+            btn_train = st.sidebar.button("🚀 Iniciar Treinamento")
 
-        # --- DOWNLOAD E PARÂMETROS ---
+            # --- LÓGICA DE TREINO ---
+            if btn_train:
+                st.divider()
+                st.subheader(f"⚙️ Treinando Modelo para: {target_col}")
+                
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                
+                try:
+                    agent = AutoMLAgentPro()
+                    
+                    status_text.text("Analisando e treinando...")
+                    progress_bar.progress(20)
+                    
+                    desc_final = description if description else f"Previsão de {target_col}"
+                    metrics = agent.train(df_train, target_column=target_col, description=desc_final)
+                    
+                    progress_bar.progress(80)
+                    status_text.text("Finalizando...")
+                    
+                    # Salvar modelo
+                    model_filename = "modelo_treinado.pkl"
+                    agent.save_model(model_filename)
+                    
+                    progress_bar.progress(100)
+                    status_text.empty()
+                    
+                    st.success("✅ Treinamento Concluído!")
+                    
+                    # Exibir Métricas
+                    col1, col2 = st.columns(2)
+                    col1.info(f"**Algoritmo:** {agent.best_model.steps[-1][1].__class__.__name__}")
+                    col1.info(f"**Tipo:** {agent.problem_type.upper()}")
+                    
+                    if agent.problem_type == 'classification':
+                        col2.metric("Acurácia", f"{metrics['accuracy']:.2%}")
+                    else:
+                        col2.metric("R² Score", f"{metrics['r2']:.4f}")
+
+                    # Download do Modelo
+                    with open(model_filename, "rb") as f:
+                        st.download_button(
+                            label="⬇️ Baixar Modelo (.pkl)",
+                            data=f,
+                            file_name=model_filename,
+                            mime="application/octet-stream"
+                        )
+                        
+                except Exception as e:
+                    st.error(f"Erro no treino: {e}")
+                    
+        except Exception as e:
+            st.error(f"Erro ao ler arquivo de treino: {e}")
+    else:
+        st.info("👈 Faça upload do arquivo CSV na barra lateral para começar o treino.")
+
+
+# ====================================================
+# ABA 2: PREVISÃO (USO DO MODELO)
+# ====================================================
+with tab2:
+    st.markdown("### Fazer previsões em novos dados usando um modelo salvo")
+    
+    col_upload_model, col_upload_data = st.columns(2)
+    
+    # 1. Upload do Modelo (.pkl)
+    with col_upload_model:
+        st.subheader("1. Carregar Modelo (.pkl)")
+        uploaded_model = st.file_uploader("Arraste o arquivo .pkl aqui", type=["pkl"])
+
+    # 2. Upload dos Novos Dados (.csv)
+    with col_upload_data:
+        st.subheader("2. Carregar Novos Dados (.csv)")
+        uploaded_new_data = st.file_uploader("Arraste o CSV com novos dados", type=["csv"])
+
+    # Lógica de Previsão
+    if uploaded_model is not None and uploaded_new_data is not None:
         st.divider()
-        col_down1, col_down2 = st.columns(2)
-        
-        with col_down1:
-            st.write("### 📥 Baixar Modelo Pronto")
-            with open(model_filename, "rb") as f:
-                st.download_button(
-                    label="Download Modelo (.PKL)",
-                    data=f,
-                    file_name=model_filename,
-                    mime="application/octet-stream"
-                )
-        
-        with col_down2:
-            with st.expander("🔍 Ver Hiperparâmetros Técnicos"):
-                st.json(agent.best_params)
-
-    except Exception as e:
-        st.error(f"Ocorreu um erro crítico durante o treino: {e}")
+        try:
+            # Carregar Modelo
+            model = joblib.load(uploaded_model)
+            st.success("Modelo carregado com sucesso!")
+            
+            # Carregar Dados (Usando o mesmo separador configurado na sidebar para consistência)
+            df_new = pd.read_csv(uploaded_new_data, sep=separator)
+            df_new.columns = df_new.columns.str.strip()
+            
+            st.write("#### Dados carregados (Primeiras linhas):")
+            st.dataframe(df_new.head())
+            
+            # Botão de Previsão
+            if st.button("🔮 Gerar Previsões"):
+                with st.spinner("Calculando previsões..."):
+                    try:
+                        # Fazer a previsão
+                        # O pipeline cuida de tratar nulos e encodings automaticamente!
+                        predictions = model.predict(df_new)
+                        
+                        # Adicionar resultado ao DataFrame
+                        df_result = df_new.copy()
+                        df_result['PREVISAO_IA'] = predictions
+                        
+                        st.balloons()
+                        st.write("### ✅ Resultado das Previsões:")
+                        
+                        # Destacar a coluna de previsão
+                        st.dataframe(df_result.style.apply(lambda x: ['background-color: #d1e7dd' if x.name == 'PREVISAO_IA' else '' for i in x], axis=0))
+                        
+                        # Converter para CSV para download
+                        csv = df_result.to_csv(index=False).encode('utf-8')
+                        
+                        st.download_button(
+                            label="⬇️ Baixar Planilha com Previsões (.csv)",
+                            data=csv,
+                            file_name="resultado_previsoes.csv",
+                            mime="text/csv",
+                        )
+                        
+                    except Exception as pred_error:
+                        st.error(f"Erro ao prever: {pred_error}")
+                        st.warning("Dica: Verifique se o novo arquivo CSV tem as mesmas colunas (nomes) que foram usadas no treino.")
+                        
+        except Exception as e:
+            st.error(f"Erro ao carregar arquivos: {e}")
