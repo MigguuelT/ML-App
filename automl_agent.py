@@ -39,26 +39,20 @@ class AutoMLAgentPro:
         elif pd.api.types.is_object_dtype(y) or pd.api.types.is_string_dtype(y):
             return 'classification'
         elif pd.api.types.is_integer_dtype(y):
-            # Heurística: Se tiver menos de 20 valores únicos ou menos de 5% de variabilidade
             if y.nunique() < 20 or (y.nunique() / len(y) < 0.05):
                 return 'classification'
             return 'regression'
         return 'regression'
 
     def _get_preprocessor(self, X):
-        """Configura o tratamento de dados (Limpeza + Escalonamento + Encoding)."""
-        # Salvar nomes das colunas para uso posterior (Visualização)
         self.numeric_features = X.select_dtypes(include=['int64', 'float64']).columns.tolist()
         self.categorical_features = X.select_dtypes(include=['object', 'category', 'bool']).columns.tolist()
 
-        # Tratamento Numérico: Mediana + RobustScaler (Anti-Outliers)
         numeric_transformer = Pipeline(steps=[
             ('imputer', SimpleImputer(strategy='median')),
             ('scaler', RobustScaler()) 
         ])
 
-        # Tratamento Categórico: Moda + OneHotEncoder
-        # sparse_output=False é crucial para conseguirmos visualizar os dados depois
         categorical_transformer = Pipeline(steps=[
             ('imputer', SimpleImputer(strategy='most_frequent')),
             ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False)) 
@@ -73,36 +67,45 @@ class AutoMLAgentPro:
         return preprocessor
 
     def _get_model_candidates(self):
-        """Define os algoritmos e o grid de hiperparâmetros a serem testados."""
+        """
+        Define candidatos otimizados para CLOUD GRATUITO (Menos iterações).
+        Mudanças:
+        - n_splits=3 (era 5) -> 40% mais rápido.
+        - Grids simplificados -> Menos combinações para testar.
+        """
+        
+        # --- OTIMIZAÇÃO 1: Reduzir Folds de 5 para 3 ---
+        FOLDS = 3 
+        
         if self.problem_type == 'classification':
             selector_score_func = f_classif
             scoring = 'accuracy'
-            cv_split = StratifiedKFold(n_splits=5, shuffle=True, random_state=self.random_state)
+            cv_split = StratifiedKFold(n_splits=FOLDS, shuffle=True, random_state=self.random_state)
             
             models = [
                 {
-                    'name': 'HistGradientBoosting (LightGBM style)',
+                    'name': 'HistGradientBoosting',
                     'estimator': HistGradientBoostingClassifier(random_state=self.random_state),
                     'params': {
-                        'model__learning_rate': [0.01, 0.1], 
-                        'model__max_iter': [100, 200], 
+                        'model__learning_rate': [0.1], # Fixo em 0.1 (padrão bom)
+                        'model__max_iter': [100],      # Limite de iterações
                         'selector__k': ['all', 10]
                     }
                 },
                 {
-                    'name': 'Random Forest Classifier',
+                    'name': 'Random Forest',
                     'estimator': RandomForestClassifier(random_state=self.random_state),
                     'params': {
-                        'model__n_estimators': [100], 
-                        'model__max_depth': [None, 10], 
-                        'selector__k': ['all', 10]
+                        'model__n_estimators': [50],   # Reduzido de 100 para 50 para velocidade
+                        'model__max_depth': [10],      # Profundidade controlada
+                        'selector__k': ['all']         # Evita duplicar testes aqui
                     }
                 },
                 {
-                    'name': 'Logistic Regression (Robust)',
+                    'name': 'Logistic Regression',
                     'estimator': LogisticRegression(random_state=self.random_state, max_iter=1000),
                     'params': {
-                        'model__C': [0.1, 1, 10], 
+                        'model__C': [1],               # Simplificado
                         'selector__k': ['all', 10]
                     }
                 }
@@ -111,15 +114,15 @@ class AutoMLAgentPro:
         else: # Regression
             selector_score_func = f_regression
             scoring = 'r2'
-            cv_split = KFold(n_splits=5, shuffle=True, random_state=self.random_state)
+            cv_split = KFold(n_splits=FOLDS, shuffle=True, random_state=self.random_state)
             
             models = [
                 {
                     'name': 'HistGradientBoosting Regressor',
                     'estimator': HistGradientBoostingRegressor(random_state=self.random_state),
                     'params': {
-                        'model__learning_rate': [0.01, 0.1], 
-                        'model__max_iter': [100, 200], 
+                        'model__learning_rate': [0.1],
+                        'model__max_iter': [100],
                         'selector__k': ['all', 10]
                     }
                 },
@@ -127,16 +130,16 @@ class AutoMLAgentPro:
                     'name': 'Random Forest Regressor',
                     'estimator': RandomForestRegressor(random_state=self.random_state),
                     'params': {
-                        'model__n_estimators': [100], 
-                        'model__max_depth': [None, 10], 
-                        'selector__k': ['all', 10]
+                        'model__n_estimators': [50],
+                        'model__max_depth': [10],
+                        'selector__k': ['all']
                     }
                 },
                 {
                     'name': 'Ridge Regression',
                     'estimator': Ridge(),
                     'params': {
-                        'model__alpha': [0.1, 1.0], 
+                        'model__alpha': [1.0],
                         'selector__k': ['all', 10]
                     }
                 }
@@ -145,35 +148,28 @@ class AutoMLAgentPro:
         return models, scoring, cv_split, selector_score_func
 
     def train(self, df, target_column, description=None):
-        """Método principal de treinamento."""
         if description:
             self.problem_description = description
         
         X = df.drop(columns=[target_column])
         y = df[target_column]
 
-        # 1. Determinar tipo
         self.problem_type = self._detect_problem_type(y)
         print(f"Tipo Detectado: {self.problem_type}")
         
-        # Encoding de target se for classificação com texto
         if self.problem_type == 'classification' and y.dtype == 'object':
             self.target_encoder = LabelEncoder()
             y = self.target_encoder.fit_transform(y)
 
-        # 2. Split Treino/Teste
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=self.random_state)
 
-        # 3. Preparação
         preprocessor = self._get_preprocessor(X)
         candidates, scoring_metric, cv, selector_func = self._get_model_candidates()
         
         best_score_overall = -np.inf
         best_model_overall = None
         
-        # 4. Loop de Otimização
         for candidate in candidates:
-            # Pipeline: Preprocess -> Select -> Model
             pipe = Pipeline(steps=[
                 ('preprocessor', preprocessor),
                 ('selector', SelectKBest(score_func=selector_func)),
@@ -182,14 +178,14 @@ class AutoMLAgentPro:
             
             print(f"Treinando {candidate['name']}...")
             
-            # --- CORREÇÃO IMPORTANTE: n_jobs=1 ---
-            # Define n_jobs=1 para evitar estouro de memória no Streamlit Cloud
+            # --- n_jobs=1 (Memória) + verbose=3 (Logs) ---
             grid = GridSearchCV(
                 pipe, 
                 param_grid=candidate['params'], 
                 cv=cv, 
                 scoring=scoring_metric, 
-                n_jobs=1 
+                n_jobs=1,
+                verbose=3 # Isso vai mostrar o progresso no log do Streamlit
             )
             
             grid.fit(X_train, y_train)
@@ -202,7 +198,6 @@ class AutoMLAgentPro:
         self.best_model = best_model_overall
         print(f"Melhor modelo: {self.best_model.steps[-1][1].__class__.__name__}")
 
-        # 5. Avaliação Final e Métricas
         y_pred = self.best_model.predict(X_test)
         final_metrics = {}
 
@@ -225,47 +220,27 @@ class AutoMLAgentPro:
             self.best_model = joblib.load(filename)
 
     def get_encoding_examples(self, X_sample):
-        """
-        Gera um dicionário mostrando 'Antes vs Depois' para cada coluna categórica.
-        Recebe X_sample (um DataFrame com algumas linhas raw).
-        """
         if not self.best_model or len(self.categorical_features) == 0:
             return {}
         
         results = {}
-        
         try:
-            # 1. Acessa o preprocessor treinado
             preprocessor = self.best_model.named_steps['preprocessor']
-            
-            # 2. Transforma a amostra
             transformed_array = preprocessor.transform(X_sample)
-            
-            # 3. Pega os nomes das colunas de saída
             feature_names = preprocessor.get_feature_names_out()
-            
-            # 4. Cria um DataFrame com os dados transformados
             df_transformed = pd.DataFrame(transformed_array, columns=feature_names, index=X_sample.index)
             
-            # 5. Para cada coluna categórica original, montamos a comparação
             for col_orig in self.categorical_features:
                 related_cols = [c for c in feature_names if f"cat__{col_orig}_" in c]
-                
                 if related_cols:
                     comparison_df = X_sample[[col_orig]].copy()
                     comparison_df.columns = ["VALOR ORIGINAL"]
-                    
                     subset_transformed = df_transformed[related_cols].copy()
-                    
-                    # Limpa os nomes das colunas
                     clean_names = [c.replace("cat__", "") for c in related_cols]
                     subset_transformed.columns = clean_names
-                    
                     final_df = pd.concat([comparison_df, subset_transformed], axis=1)
                     results[col_orig] = final_df
-            
             return results
-
         except Exception as e:
-            print(f"Erro ao gerar exemplos de encoding: {e}")
+            print(f"Erro encoding: {e}")
             return {}
