@@ -19,9 +19,6 @@ with tab1:
     
     train_file = st.sidebar.file_uploader("Upload Dados de TREINO (CSV)", type=["csv"], key="train_uploader")
 
-    df_train = None
-    target_col = None
-    
     if train_file is not None:
         try:
             df_train = pd.read_csv(train_file, sep=separator)
@@ -43,7 +40,7 @@ with tab1:
                 try:
                     agent = AutoMLAgentPro()
                     
-                    status_text.text("Limpando dados e treinando...")
+                    status_text.text("Limpando dados e otimizando modelo...")
                     progress_bar.progress(20)
                     
                     metrics = agent.train(df_train, target_column=target_col, description=description)
@@ -55,15 +52,28 @@ with tab1:
                     
                     st.success("✅ Treinamento Concluído!")
                     
-                    # Visualização Encoding
-                    sample_data = df_train.drop(columns=[target_col]).head(5)
-                    encoding_examples = agent.get_encoding_examples(sample_data)
-                    
-                    if encoding_examples:
-                        with st.expander("🔍 Ver One-Hot Encoding (Texto -> Números)"):
-                            for col_name, df_example in encoding_examples.items():
-                                st.markdown(f"**Origem: {col_name}**")
-                                st.dataframe(df_example.style.background_gradient(cmap='Blues', subset=df_example.columns[1:]))
+                    # --- VISUALIZAÇÃO ONE-HOT ---
+                    try:
+                        # Pegamos uma amostra
+                        sample_data = df_train.drop(columns=[target_col]).head(5)
+                        encoding_examples = agent.get_encoding_examples(sample_data)
+                        
+                        if encoding_examples:
+                            with st.expander("🔍 Ver como o Modelo transformou Texto em Números (One-Hot)"):
+                                st.info("O modelo cria novas colunas para cada categoria. Ex: 'Sex' vira 'Sex_M' (0 ou 1) e 'Sex_F'.")
+                                for col_name, df_example in encoding_examples.items():
+                                    st.markdown(f"**Origem: {col_name}**")
+                                    st.dataframe(df_example.style.background_gradient(cmap='Blues'))
+                        else:
+                            # Se não tem encoding, avisa
+                            if len(agent.categorical_features) > 0:
+                                st.warning("⚠️ Há colunas de texto, mas a visualização não conseguiu mapear. Isso não afeta a previsão.")
+                            else:
+                                st.info("ℹ️ Seus dados são todos numéricos, nenhuma transformação de texto foi necessária.")
+                                
+                    except Exception as viz_error:
+                        st.warning(f"Não foi possível gerar a visualização do encoding: {viz_error}")
+                    # ---------------------------
 
                     col1, col2 = st.columns(2)
                     col1.info(f"**Algoritmo:** {agent.best_model.steps[-1][1].__class__.__name__}")
@@ -83,7 +93,7 @@ with tab1:
             st.error(f"Erro ao ler arquivo: {e}")
 
 # ====================================================
-# ABA 2: PREVISÃO (CORRIGIDA)
+# ABA 2: PREVISÃO
 # ====================================================
 with tab2:
     st.markdown("### Fazer previsões com modelo salvo")
@@ -101,11 +111,9 @@ with tab2:
             df_new = pd.read_csv(uploaded_new_data, sep=separator)
             df_new.columns = df_new.columns.str.strip()
             
-            # --- CORREÇÃO CRÍTICA PARA O ERRO '0,455' ---
-            # Instanciamos o agente APENAS para usar a função de limpeza
+            # Limpeza na Previsão
             temp_agent = AutoMLAgentPro()
             df_clean = temp_agent.clean_data_types(df_new)
-            # --------------------------------------------
             
             st.write("#### Dados (Processados):")
             st.dataframe(df_clean.head())
@@ -113,7 +121,7 @@ with tab2:
             if st.button("🔮 Gerar Previsões"):
                 try:
                     predictions = model.predict(df_clean)
-                    df_result = df_new.copy() # Usamos o original para mostrar no Excel
+                    df_result = df_new.copy()
                     df_result['PREVISAO_IA'] = predictions
                     
                     st.write("### ✅ Resultado:")
@@ -124,7 +132,6 @@ with tab2:
                     
                 except Exception as pred_error:
                     st.error(f"Erro ao prever: {pred_error}")
-                    st.warning("Dica: Verifique se os nomes das colunas são idênticos aos do treino.")
                     
         except Exception as e:
             st.error(f"Erro geral: {e}")
