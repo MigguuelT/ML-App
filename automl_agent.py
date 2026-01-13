@@ -32,8 +32,34 @@ class AutoMLAgentPro:
         self.categorical_features = [] 
         self.numeric_features = []
         
+    def _smart_type_conversion(self, df):
+        """
+        CORREÇÃO CRÍTICA: Tenta converter colunas 'object' que parecem números.
+        Resolve o problema de '10,5' (BR) ser lido como texto.
+        """
+        df_clean = df.copy()
+        for col in df_clean.columns:
+            # Se a coluna é do tipo objeto (texto)
+            if df_clean[col].dtype == 'object':
+                try:
+                    # 1. Tenta substituir vírgula por ponto (Padrão BR -> US)
+                    # convertemos para string primeiro para garantir
+                    series_fixed = df_clean[col].astype(str).str.replace(',', '.')
+                    
+                    # 2. Tenta converter para número
+                    # errors='raise' garante que só converte se TODOS os valores forem numéricos
+                    # Se tiver um "Masculino" no meio, ele falha e vai para o 'except', mantendo como texto
+                    series_numeric = pd.to_numeric(series_fixed)
+                    
+                    # Se chegou aqui, funcionou! Substitui a coluna.
+                    df_clean[col] = series_numeric
+                    print(f"   [AutoML] Coluna '{col}' convertida de Texto para Numérico com sucesso.")
+                except:
+                    # Se deu erro (tem letras misturadas), mantém como texto original
+                    pass
+        return df_clean
+
     def _detect_problem_type(self, y):
-        """Detecção automática do tipo de problema baseada no alvo."""
         if pd.api.types.is_float_dtype(y):
             return 'regression'
         elif pd.api.types.is_object_dtype(y) or pd.api.types.is_string_dtype(y):
@@ -47,6 +73,8 @@ class AutoMLAgentPro:
     def _get_preprocessor(self, X):
         self.numeric_features = X.select_dtypes(include=['int64', 'float64']).columns.tolist()
         self.categorical_features = X.select_dtypes(include=['object', 'category', 'bool']).columns.tolist()
+
+        print(f"   > Numéricas: {len(self.numeric_features)} | Categóricas: {len(self.categorical_features)}")
 
         numeric_transformer = Pipeline(steps=[
             ('imputer', SimpleImputer(strategy='median')),
@@ -67,14 +95,7 @@ class AutoMLAgentPro:
         return preprocessor
 
     def _get_model_candidates(self):
-        """
-        Define candidatos otimizados para CLOUD GRATUITO (Menos iterações).
-        Mudanças:
-        - n_splits=3 (era 5) -> 40% mais rápido.
-        - Grids simplificados -> Menos combinações para testar.
-        """
-        
-        # --- OTIMIZAÇÃO 1: Reduzir Folds de 5 para 3 ---
+        # Configuração Otimizada para Performance
         FOLDS = 3 
         
         if self.problem_type == 'classification':
@@ -87,8 +108,8 @@ class AutoMLAgentPro:
                     'name': 'HistGradientBoosting',
                     'estimator': HistGradientBoostingClassifier(random_state=self.random_state),
                     'params': {
-                        'model__learning_rate': [0.1], # Fixo em 0.1 (padrão bom)
-                        'model__max_iter': [100],      # Limite de iterações
+                        'model__learning_rate': [0.1], 
+                        'model__max_iter': [100], 
                         'selector__k': ['all', 10]
                     }
                 },
@@ -96,18 +117,15 @@ class AutoMLAgentPro:
                     'name': 'Random Forest',
                     'estimator': RandomForestClassifier(random_state=self.random_state),
                     'params': {
-                        'model__n_estimators': [50],   # Reduzido de 100 para 50 para velocidade
-                        'model__max_depth': [10],      # Profundidade controlada
-                        'selector__k': ['all']         # Evita duplicar testes aqui
+                        'model__n_estimators': [50], 
+                        'model__max_depth': [10], 
+                        'selector__k': ['all']
                     }
                 },
                 {
                     'name': 'Logistic Regression',
                     'estimator': LogisticRegression(random_state=self.random_state, max_iter=1000),
-                    'params': {
-                        'model__C': [1],               # Simplificado
-                        'selector__k': ['all', 10]
-                    }
+                    'params': {'model__C': [1], 'selector__k': ['all']}
                 }
             ]
             
@@ -138,19 +156,19 @@ class AutoMLAgentPro:
                 {
                     'name': 'Ridge Regression',
                     'estimator': Ridge(),
-                    'params': {
-                        'model__alpha': [1.0],
-                        'selector__k': ['all', 10]
-                    }
+                    'params': {'model__alpha': [1.0], 'selector__k': ['all']}
                 }
             ]
             
         return models, scoring, cv_split, selector_score_func
 
     def train(self, df, target_column, description=None):
-        if description:
-            self.problem_description = description
+        if description: self.problem_description = description
         
+        # 1. LIMPEZA INTELIGENTE (Correção Decimal BR)
+        print("Iniciando conversão inteligente de tipos...")
+        df = self._smart_type_conversion(df)
+
         X = df.drop(columns=[target_column])
         y = df[target_column]
 
@@ -178,14 +196,14 @@ class AutoMLAgentPro:
             
             print(f"Treinando {candidate['name']}...")
             
-            # --- n_jobs=1 (Memória) + verbose=3 (Logs) ---
+            # n_jobs=1 para memória, verbose=3 para log
             grid = GridSearchCV(
                 pipe, 
                 param_grid=candidate['params'], 
                 cv=cv, 
                 scoring=scoring_metric, 
                 n_jobs=1,
-                verbose=3 # Isso vai mostrar o progresso no log do Streamlit
+                verbose=3 
             )
             
             grid.fit(X_train, y_train)
@@ -212,28 +230,30 @@ class AutoMLAgentPro:
         return final_metrics
 
     def save_model(self, filename='automl_model.pkl'):
-        if self.best_model:
-            joblib.dump(self.best_model, filename)
+        if self.best_model: joblib.dump(self.best_model, filename)
 
     def load_model(self, filename='automl_model.pkl'):
-        if os.path.exists(filename):
-            self.best_model = joblib.load(filename)
+        if os.path.exists(filename): self.best_model = joblib.load(filename)
 
     def get_encoding_examples(self, X_sample):
+        # O método de visualização precisa tratar os dados da mesma forma que o treino
+        # Aplicamos a conversão inteligente na amostra também para não dar erro
+        X_sample_clean = self._smart_type_conversion(X_sample)
+
         if not self.best_model or len(self.categorical_features) == 0:
             return {}
         
         results = {}
         try:
             preprocessor = self.best_model.named_steps['preprocessor']
-            transformed_array = preprocessor.transform(X_sample)
+            transformed_array = preprocessor.transform(X_sample_clean)
             feature_names = preprocessor.get_feature_names_out()
-            df_transformed = pd.DataFrame(transformed_array, columns=feature_names, index=X_sample.index)
+            df_transformed = pd.DataFrame(transformed_array, columns=feature_names, index=X_sample_clean.index)
             
             for col_orig in self.categorical_features:
                 related_cols = [c for c in feature_names if f"cat__{col_orig}_" in c]
                 if related_cols:
-                    comparison_df = X_sample[[col_orig]].copy()
+                    comparison_df = X_sample_clean[[col_orig]].copy()
                     comparison_df.columns = ["VALOR ORIGINAL"]
                     subset_transformed = df_transformed[related_cols].copy()
                     clean_names = [c.replace("cat__", "") for c in related_cols]
