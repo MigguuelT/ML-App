@@ -28,12 +28,34 @@ with tab1:
             st.dataframe(df_train.head())
             
             st.sidebar.divider()
-            target_col = st.sidebar.selectbox("Coluna Alvo (Target)", options=df_train.columns.tolist())
+            
+            # 1. ESCOLHA DO TARGET
+            all_cols = df_train.columns.tolist()
+            target_col = st.sidebar.selectbox("Coluna Alvo (Target)", options=all_cols)
+            
+            # 2. FILTRO DE COLUNAS (NOVIDADE CRÍTICA)
+            # Removemos a target da lista de possíveis exclusões para não dar erro
+            cols_possible_drop = [c for c in all_cols if c != target_col]
+            drop_cols = st.sidebar.multiselect(
+                "Remover Colunas (IDs, Nomes, Vazamento)", 
+                options=cols_possible_drop,
+                help="Selecione colunas que não ajudam na previsão ou que são 'spoilers' (ex: ID, Nome, Data de Cancelamento)."
+            )
+            
             description = st.sidebar.text_area("Descrição (Opcional)", placeholder="Ex: Prever vendas")
             
             if st.sidebar.button("🚀 Iniciar Treinamento"):
                 st.divider()
                 st.subheader(f"⚙️ Treinando para: {target_col}")
+                
+                # --- REMOÇÃO DAS COLUNAS SELECIONADAS ---
+                if drop_cols:
+                    st.warning(f"Removendo colunas: {drop_cols}")
+                    df_train_final = df_train.drop(columns=drop_cols)
+                else:
+                    df_train_final = df_train
+                # ----------------------------------------
+                
                 progress_bar = st.progress(0)
                 status_text = st.empty()
                 
@@ -43,7 +65,7 @@ with tab1:
                     status_text.text("Limpando dados e otimizando modelo...")
                     progress_bar.progress(20)
                     
-                    metrics = agent.train(df_train, target_column=target_col, description=description)
+                    metrics = agent.train(df_train_final, target_column=target_col, description=description)
                     
                     progress_bar.progress(80)
                     agent.save_model("modelo_treinado.pkl")
@@ -52,37 +74,30 @@ with tab1:
                     
                     st.success("✅ Treinamento Concluído!")
                     
-                    # --- NOVIDADE: VISUALIZAÇÃO DO TARGET (Y) ---
+                    # --- VISUALIZAÇÃO ONE-HOT ---
                     if agent.problem_type == 'classification' and agent.target_mapping:
-                        st.info(f"O modelo detectou um problema de CLASSIFICAÇÃO.")
                         with st.expander("🔍 Ver Transformação do Alvo (Target Encoding)"):
                             st.write("O modelo converteu suas classes de texto para números internos:")
-                            
-                            # Transforma o dict em DataFrame para ficar bonito
                             df_target_map = pd.DataFrame(list(agent.target_mapping.items()), columns=['Classe Original', 'Código Interno'])
                             st.dataframe(df_target_map, hide_index=True)
-                    # ---------------------------------------------
 
-                    # --- VISUALIZAÇÃO DAS FEATURES (X) ---
+                    # --- VISUALIZAÇÃO DAS FEATURES ---
                     try:
-                        sample_data = df_train.drop(columns=[target_col]).head(5)
+                        sample_data = df_train_final.drop(columns=[target_col]).head(5)
                         encoding_examples = agent.get_encoding_examples(sample_data)
                         
                         if encoding_examples:
-                            with st.expander("🔍 Ver Transformação das Variáveis de Entrada (Features)"):
+                            with st.expander("🔍 Ver Transformação das Variáveis de Entrada"):
                                 for col_name, df_example in encoding_examples.items():
                                     st.markdown(f"**Origem: {col_name}**")
                                     st.dataframe(df_example.style.background_gradient(cmap='Blues'))
                         else:
-                            # Se não tem encoding de features, explica por que
                             with st.expander("ℹ️ Sobre as Variáveis de Entrada"):
-                                st.write("Todas as variáveis de entrada foram identificadas como numéricas após a limpeza.")
-                                st.write(f"Numéricas detectadas: {len(agent.numeric_features)}")
-                                st.write(f"Texto detectado: {len(agent.categorical_features)}")
+                                st.write("Todas as variáveis de entrada foram identificadas como numéricas.")
+                                st.write(f"Numéricas: {len(agent.numeric_features)} | Texto: {len(agent.categorical_features)}")
                                 
                     except Exception as viz_error:
-                        st.warning(f"Erro na visualização: {viz_error}")
-                    # -------------------------------------
+                        st.warning(f"Erro visualização: {viz_error}")
 
                     col1, col2 = st.columns(2)
                     col1.info(f"**Algoritmo:** {agent.best_model.steps[-1][1].__class__.__name__}")
@@ -129,12 +144,18 @@ with tab2:
             
             if st.button("🔮 Gerar Previsões"):
                 try:
-                    predictions = model.predict(df_clean)
+                    # Tenta prever. Se houver colunas extras (como ID) que não estavam no treino,
+                    # o sklearn vai dar erro. Por isso precisamos dropar aqui também ou confiar
+                    # que o usuário suba o CSV já limpo, ou que o ColumnTransformer ignore o resto.
+                    # O ColumnTransformer ignora colunas não especificadas SE o resto for passthrough,
+                    # mas aqui filtramos por tipo. 
                     
-                    # SE TIVER TARGET ENCODER TREINADO DENTRO DO PIPELINE, TENTAMOS REVERTER (OPCIONAL)
-                    # Como o LabelEncoder não é salvo dentro do pipeline do sklearn automaticamente,
-                    # a previsão sairá numérica (0, 1). 
-                    # Se quiser reverter, precisaria salvar o LabelEncoder junto no .pkl.
+                    # MELHOR ABORDAGEM: O modelo espera EXATAMENTE as colunas de treino.
+                    # Se o CSV novo tiver coluna "ID" e o modelo foi treinado sem "ID", vai dar erro?
+                    # O ColumnTransformer seleciona pelo nome. Então se tiver colunas A MAIS, não tem problema.
+                    # Se tiver colunas A MENOS, dá erro.
+                    
+                    predictions = model.predict(df_clean)
                     
                     df_result = df_new.copy()
                     df_result['PREVISAO_IA'] = predictions
@@ -147,6 +168,7 @@ with tab2:
                     
                 except Exception as pred_error:
                     st.error(f"Erro ao prever: {pred_error}")
+                    st.warning("Verifique se o CSV novo contém as colunas usadas no treino.")
                     
         except Exception as e:
             st.error(f"Erro geral: {e}")
