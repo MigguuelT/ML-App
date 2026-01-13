@@ -20,20 +20,19 @@ class AutoMLAgentPro:
     def __init__(self, random_state=42):
         self.random_state = random_state
         self.problem_type = None
-        self.problem_description = ""
         self.best_model = None
         self.best_params = None
         self.target_encoder = None
         self.categorical_features = [] 
         self.numeric_features = []
+        self.target_mapping = {} # NOVO: Para guardar o mapa do Target
         
     def clean_data_types(self, df):
-        """Converte strings numéricas (BR) para float (US) de forma robusta."""
+        """Converte strings numéricas (BR) para float (US)."""
         df_clean = df.copy()
         for col in df_clean.columns:
             if df_clean[col].dtype == 'object':
                 try:
-                    # Remove ponto de milhar e troca vírgula decimal
                     series_fixed = df_clean[col].astype(str).str.replace('.', '', regex=False).str.replace(',', '.')
                     df_clean[col] = pd.to_numeric(series_fixed)
                 except:
@@ -41,23 +40,13 @@ class AutoMLAgentPro:
         return df_clean
 
     def _detect_problem_type(self, y):
-        # Prioriza Regressão se for float
-        if pd.api.types.is_float_dtype(y):
-            return 'regression'
-        
+        if pd.api.types.is_float_dtype(y): return 'regression'
         if pd.api.types.is_object_dtype(y) or pd.api.types.is_string_dtype(y):
-            # Se tem MUITAS classes (ex: >50), provavelmente é regressão que falhou na conversão
-            # Mas se for texto puro, é classificação
-            if y.nunique() > 50: 
-                return 'regression' # Tentativa arriscada, mas evita classificar "Preço" como categoria
+            if y.nunique() > 50: return 'regression'
             return 'classification'
-            
         elif pd.api.types.is_integer_dtype(y):
-            # Se tem poucos valores únicos (ex: notas 1 a 5), trata como classificação
-            if y.nunique() < 20:
-                return 'classification'
+            if y.nunique() < 20: return 'classification'
             return 'regression'
-            
         return 'regression'
 
     def _get_preprocessor(self, X):
@@ -71,7 +60,6 @@ class AutoMLAgentPro:
 
         categorical_transformer = Pipeline(steps=[
             ('imputer', SimpleImputer(strategy='most_frequent')),
-            # sparse_output=False é essencial para visualização
             ('onehot', OneHotEncoder(handle_unknown='ignore', sparse_output=False)) 
         ])
 
@@ -84,9 +72,7 @@ class AutoMLAgentPro:
         return preprocessor
 
     def _get_model_candidates(self):
-        # Aumentamos a potência dos modelos para melhorar a Acurácia
-        FOLDS = 3 
-        
+        FOLDS = 3
         if self.problem_type == 'classification':
             selector_score_func = f_classif
             scoring = 'accuracy'
@@ -96,20 +82,12 @@ class AutoMLAgentPro:
                 {
                     'name': 'HistGradientBoosting',
                     'estimator': HistGradientBoostingClassifier(random_state=self.random_state),
-                    'params': {
-                        'model__learning_rate': [0.1], 
-                        'model__max_iter': [100], 
-                        'selector__k': ['all', 10]
-                    }
+                    'params': {'model__learning_rate': [0.1], 'model__max_iter': [100], 'selector__k': ['all', 10]}
                 },
                 {
                     'name': 'Random Forest',
                     'estimator': RandomForestClassifier(random_state=self.random_state),
-                    'params': {
-                        'model__n_estimators': [50], 
-                        'model__max_depth': [None, 20], # Aumentado profundidade (None = ilimitado)
-                        'selector__k': ['all']
-                    }
+                    'params': {'model__n_estimators': [50], 'model__max_depth': [None, 20], 'selector__k': ['all']}
                 },
                 {
                     'name': 'Logistic Regression',
@@ -117,8 +95,7 @@ class AutoMLAgentPro:
                     'params': {'model__C': [1, 10], 'selector__k': ['all']}
                 }
             ]
-            
-        else: # Regression
+        else:
             selector_score_func = f_regression
             scoring = 'r2'
             cv_split = KFold(n_splits=FOLDS, shuffle=True, random_state=self.random_state)
@@ -132,11 +109,7 @@ class AutoMLAgentPro:
                 {
                     'name': 'Random Forest Regressor',
                     'estimator': RandomForestRegressor(random_state=self.random_state),
-                    'params': {
-                        'model__n_estimators': [50], 
-                        'model__max_depth': [None, 20], # Aumentado profundidade
-                        'selector__k': ['all']
-                    }
+                    'params': {'model__n_estimators': [50], 'model__max_depth': [None, 20], 'selector__k': ['all']}
                 },
                 {
                     'name': 'Ridge Regression',
@@ -149,7 +122,6 @@ class AutoMLAgentPro:
     def train(self, df, target_column, description=None):
         if description: self.problem_description = description
         
-        # 1. Limpeza TOTAL (Features + Target)
         print("Limpando dados...")
         df_clean = self.clean_data_types(df)
 
@@ -159,9 +131,19 @@ class AutoMLAgentPro:
         self.problem_type = self._detect_problem_type(y)
         print(f"Tipo Detectado: {self.problem_type}")
         
-        if self.problem_type == 'classification' and y.dtype == 'object':
-            self.target_encoder = LabelEncoder()
-            y = self.target_encoder.fit_transform(y)
+        # --- LOGICA DE TARGET ENCODING VISUAL ---
+        if self.problem_type == 'classification':
+            # Se for texto, usa LabelEncoder e salva o mapa
+            if y.dtype == 'object' or y.dtype.name == 'category':
+                self.target_encoder = LabelEncoder()
+                y = self.target_encoder.fit_transform(y)
+                # Salva o dicionário: {'ClasseA': 0, 'ClasseB': 1}
+                self.target_mapping = {str(label): int(idx) for idx, label in enumerate(self.target_encoder.classes_)}
+            else:
+                # Se já for numérico, mas é classificação, mapeia direto
+                unique_vals = sorted(y.unique())
+                self.target_mapping = {str(val): int(val) for val in unique_vals}
+        # ----------------------------------------
 
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=self.random_state)
 
@@ -209,43 +191,28 @@ class AutoMLAgentPro:
         if os.path.exists(filename): self.best_model = joblib.load(filename)
 
     def get_encoding_examples(self, X_sample):
-        """Versão Corrigida: Identifica as colunas independente do prefixo."""
         X_sample_clean = self.clean_data_types(X_sample)
-        
         if not self.best_model or len(self.categorical_features) == 0:
             return {}
-        
         results = {}
         try:
             preprocessor = self.best_model.named_steps['preprocessor']
             transformed_array = preprocessor.transform(X_sample_clean)
             feature_names = preprocessor.get_feature_names_out()
             df_transformed = pd.DataFrame(transformed_array, columns=feature_names, index=X_sample_clean.index)
-            
             for col_orig in self.categorical_features:
-                # LÓGICA DE BUSCA MELHORADA: Procura o nome da coluna no meio da string
-                # Ex: procura 'Sex_' dentro de 'cat__Sex_M' ou 'pipeline-1__Sex_M'
                 related_cols = [c for c in feature_names if f"{col_orig}_" in c]
-                
                 if related_cols:
                     comparison_df = X_sample_clean[[col_orig]].copy()
                     comparison_df.columns = ["VALOR ORIGINAL"]
-                    
                     subset_transformed = df_transformed[related_cols].copy()
-                    
-                    # Limpa os nomes removendo tudo antes do último '__' (se houver)
                     clean_names = []
                     for c in related_cols:
-                        if "__" in c:
-                            clean_names.append(c.split("__")[-1]) # Pega 'Sex_M'
-                        else:
-                            clean_names.append(c)
-                            
+                        if "__" in c: clean_names.append(c.split("__")[-1])
+                        else: clean_names.append(c)
                     subset_transformed.columns = clean_names
                     final_df = pd.concat([comparison_df, subset_transformed], axis=1)
                     results[col_orig] = final_df
-                    
             return results
-        except Exception as e:
-            print(f"Erro Visualizer: {e}")
+        except Exception:
             return {}

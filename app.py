@@ -52,28 +52,37 @@ with tab1:
                     
                     st.success("✅ Treinamento Concluído!")
                     
-                    # --- VISUALIZAÇÃO ONE-HOT ---
+                    # --- NOVIDADE: VISUALIZAÇÃO DO TARGET (Y) ---
+                    if agent.problem_type == 'classification' and agent.target_mapping:
+                        st.info(f"O modelo detectou um problema de CLASSIFICAÇÃO.")
+                        with st.expander("🔍 Ver Transformação do Alvo (Target Encoding)"):
+                            st.write("O modelo converteu suas classes de texto para números internos:")
+                            
+                            # Transforma o dict em DataFrame para ficar bonito
+                            df_target_map = pd.DataFrame(list(agent.target_mapping.items()), columns=['Classe Original', 'Código Interno'])
+                            st.dataframe(df_target_map, hide_index=True)
+                    # ---------------------------------------------
+
+                    # --- VISUALIZAÇÃO DAS FEATURES (X) ---
                     try:
-                        # Pegamos uma amostra
                         sample_data = df_train.drop(columns=[target_col]).head(5)
                         encoding_examples = agent.get_encoding_examples(sample_data)
                         
                         if encoding_examples:
-                            with st.expander("🔍 Ver como o Modelo transformou Texto em Números (One-Hot)"):
-                                st.info("O modelo cria novas colunas para cada categoria. Ex: 'Sex' vira 'Sex_M' (0 ou 1) e 'Sex_F'.")
+                            with st.expander("🔍 Ver Transformação das Variáveis de Entrada (Features)"):
                                 for col_name, df_example in encoding_examples.items():
                                     st.markdown(f"**Origem: {col_name}**")
                                     st.dataframe(df_example.style.background_gradient(cmap='Blues'))
                         else:
-                            # Se não tem encoding, avisa
-                            if len(agent.categorical_features) > 0:
-                                st.warning("⚠️ Há colunas de texto, mas a visualização não conseguiu mapear. Isso não afeta a previsão.")
-                            else:
-                                st.info("ℹ️ Seus dados são todos numéricos, nenhuma transformação de texto foi necessária.")
+                            # Se não tem encoding de features, explica por que
+                            with st.expander("ℹ️ Sobre as Variáveis de Entrada"):
+                                st.write("Todas as variáveis de entrada foram identificadas como numéricas após a limpeza.")
+                                st.write(f"Numéricas detectadas: {len(agent.numeric_features)}")
+                                st.write(f"Texto detectado: {len(agent.categorical_features)}")
                                 
                     except Exception as viz_error:
-                        st.warning(f"Não foi possível gerar a visualização do encoding: {viz_error}")
-                    # ---------------------------
+                        st.warning(f"Erro na visualização: {viz_error}")
+                    # -------------------------------------
 
                     col1, col2 = st.columns(2)
                     col1.info(f"**Algoritmo:** {agent.best_model.steps[-1][1].__class__.__name__}")
@@ -121,6 +130,12 @@ with tab2:
             if st.button("🔮 Gerar Previsões"):
                 try:
                     predictions = model.predict(df_clean)
+                    
+                    # SE TIVER TARGET ENCODER TREINADO DENTRO DO PIPELINE, TENTAMOS REVERTER (OPCIONAL)
+                    # Como o LabelEncoder não é salvo dentro do pipeline do sklearn automaticamente,
+                    # a previsão sairá numérica (0, 1). 
+                    # Se quiser reverter, precisaria salvar o LabelEncoder junto no .pkl.
+                    
                     df_result = df_new.copy()
                     df_result['PREVISAO_IA'] = predictions
                     
